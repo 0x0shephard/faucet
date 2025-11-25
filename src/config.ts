@@ -14,8 +14,8 @@ function getEnvVar(key: string, defaultValue?: string): string {
 export const config: BotConfig = {
   sepoliaRpcUrl: getEnvVar('SEPOLIA_RPC_URL'),
   masterWalletPrivateKey: getEnvVar('MASTER_WALLET_PRIVATE_KEY'),
-  googleEmail: getEnvVar('GOOGLE_EMAIL'),
-  googlePassword: getEnvVar('GOOGLE_PASSWORD'),
+  googleEmail: process.env.GOOGLE_EMAIL || '', // Optional - not used in distribution-only mode
+  googlePassword: process.env.GOOGLE_PASSWORD || '', // Optional - not used in distribution-only mode
   faucetWalletAddress: getEnvVar('FAUCET_WALLET_ADDRESS'),
   port: parseInt(getEnvVar('PORT', '3001'), 10),
   claimIntervalHours: parseInt(getEnvVar('CLAIM_INTERVAL_HOURS', '24'), 10),
