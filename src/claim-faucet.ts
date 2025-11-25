@@ -41,10 +41,15 @@ export class FaucetClaimer {
       // Enter email
       await this.page.fill('input[type="email"]', config.googleEmail);
       await this.page.click('button:has-text("Next")');
-      await this.page.waitForTimeout(2000);
+
+      // Wait for password field to be visible (Google shows hidden field first)
+      await this.page.waitForSelector('input[type="password"]:visible', {
+        state: 'visible',
+        timeout: 10000
+      });
 
       // Enter password
-      await this.page.fill('input[type="password"]', config.googlePassword);
+      await this.page.fill('input[type="password"]:visible', config.googlePassword);
       await this.page.click('button:has-text("Next")');
       await this.page.waitForTimeout(3000);
 
