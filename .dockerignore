@@ -1,3 +1,7 @@
+# Keep these files (whitelist)
+!package.json
+!tsconfig.json
+
 # Dependencies
 node_modules/
 npm-debug.log

@@ -20,6 +20,9 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
+# Debug: List files to see what was copied
+RUN ls -la
+
 # Install ALL dependencies (including dev deps for build)
 RUN npm install
 
