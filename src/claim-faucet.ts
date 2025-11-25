@@ -12,8 +12,13 @@ export class FaucetClaimer {
 
   async initialize(): Promise<void> {
     console.log('🚀 Initializing browser for faucet claim...');
+
+    // Use system Chromium in Docker, otherwise use Playwright's browser
+    const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined;
+
     this.browser = await chromium.launch({
       headless: config.headless,
+      executablePath: executablePath,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
 
