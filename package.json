@@ -1,0 +1,30 @@
+{
+  "name": "bytestrike-faucet-bot",
+  "version": "1.0.0",
+  "description": "Automated Sepolia faucet bot that claims from Google Cloud and distributes to users",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "watch": "tsc -w",
+    "claim": "ts-node src/claim-faucet.ts"
+  },
+  "keywords": ["faucet", "sepolia", "testnet", "ethereum", "automation"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "viem": "^2.37.5",
+    "playwright": "^1.48.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.21.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "typescript": "^5.3.2",
+    "ts-node": "^10.9.2"
+  }
+}

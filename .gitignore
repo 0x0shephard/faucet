@@ -14,7 +14,10 @@ build/
 
 # Data (contains sensitive request/claim history)
 data/
-*.json
+data/*.json
+requests.json
+claims.json
+rate-limits.json
 
 # Logs
 logs/
