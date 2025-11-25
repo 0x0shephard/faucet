@@ -1,47 +1,23 @@
-# Keep these files (whitelist)
-!package.json
-!tsconfig.json
-
-# Dependencies
+# Node modules will be installed fresh
 node_modules/
-npm-debug.log
-yarn-error.log
-package-lock.json
-yarn.lock
 
-# Environment
-.env
-.env.*
-
-# Build
+# Build output will be generated
 dist/
 
-# Data (will be mounted as volume)
-data/
-data/*.json
+# Environment files
+.env
+.env.*
 
 # Git
 .git/
 .gitignore
 
-# Documentation
-*.md
+# Data directory (runtime generated)
+data/
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# OS
+# OS files
 .DS_Store
-Thumbs.db
-
-# Test
-test/
-*.test.ts
-*.spec.ts
-
-# Misc
-screenshots/
-logs/
