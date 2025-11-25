@@ -102,6 +102,7 @@ export class ETHDistributor {
 
       // Send transaction
       const hash = await this.walletClient.sendTransaction({
+        account: this.account,
         to: toAddress as `0x${string}`,
         value: amount,
       });
