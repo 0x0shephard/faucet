@@ -42,14 +42,15 @@ export class FaucetClaimer {
       await this.page.fill('input[type="email"]', config.googleEmail);
       await this.page.click('button:has-text("Next")');
 
-      // Wait for password field to be visible (Google shows hidden field first)
-      await this.page.waitForSelector('input[type="password"]:visible', {
-        state: 'visible',
-        timeout: 10000
-      });
+      // Wait for password page to load
+      await this.page.waitForTimeout(3000);
+
+      // Find the actual visible password field (not the hidden one with aria-hidden="true")
+      const passwordInput = await this.page.locator('input[type="password"]:not([aria-hidden="true"])').first();
+      await passwordInput.waitFor({ state: 'visible', timeout: 10000 });
 
       // Enter password
-      await this.page.fill('input[type="password"]:visible', config.googlePassword);
+      await passwordInput.fill(config.googlePassword);
       await this.page.click('button:has-text("Next")');
       await this.page.waitForTimeout(3000);
 
