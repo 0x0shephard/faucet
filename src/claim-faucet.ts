@@ -45,8 +45,9 @@ export class FaucetClaimer {
       // Wait for password page to load
       await this.page.waitForTimeout(3000);
 
-      // Find the actual visible password field (not the hidden one with aria-hidden="true")
-      const passwordInput = await this.page.locator('input[type="password"]:not([aria-hidden="true"])').first();
+      // Find the actual visible password field by name attribute (not the hidden one)
+      // Google uses name="Passwd" for the real password field
+      const passwordInput = this.page.locator('input[name="Passwd"]');
       await passwordInput.waitFor({ state: 'visible', timeout: 10000 });
 
       // Enter password
