@@ -17,17 +17,14 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy everything first
+COPY . .
 
 # Debug: List files to see what was copied
 RUN ls -la
 
 # Install ALL dependencies (including dev deps for build)
 RUN npm install
-
-# Copy source code
-COPY . .
 
 # Build TypeScript
 RUN npm run build
