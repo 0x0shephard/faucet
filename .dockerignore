@@ -14,7 +14,7 @@ dist/
 
 # Data (will be mounted as volume)
 data/
-*.json
+data/*.json
 
 # Git
 .git/
@@ -22,7 +22,6 @@ data/
 
 # Documentation
 *.md
-!package.json
 
 # IDE
 .vscode/
