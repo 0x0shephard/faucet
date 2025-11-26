@@ -146,7 +146,7 @@ app.post('/request', async (req: Request, res: Response) => {
 
     // Check user balance
     const userBalance = await distributor.getUserBalance(walletAddress);
-    const threshold = BigInt(config.minWalletBalanceThreshold) * BigInt(1e18);
+    const threshold = BigInt(Math.floor(parseFloat(config.minWalletBalanceThreshold) * 1e18));
 
     if (userBalance >= threshold) {
       return res.status(400).json({
