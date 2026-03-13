@@ -82,17 +82,8 @@ function incrementRateLimit(walletAddress: string, ipAddress?: string): void {
 /**
  * GET /health - Health check
  */
-app.get('/health', async (req: Request, res: Response) => {
-  try {
-    const balance = await distributor.getMasterBalance();
-    res.json({
-      status: 'ok',
-      masterWallet: (await distributor['account']).address,
-      balance: balance.toString(),
-    });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
+app.get('/health', (req: Request, res: Response) => {
+  res.json({ status: 'ok' });
 });
 
 /**
