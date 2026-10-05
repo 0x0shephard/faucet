@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import { randomBytes } from 'crypto';
 import { config } from './config';
 import { ETHDistributor } from './distributor';
 import {
@@ -77,6 +78,24 @@ function incrementRateLimit(walletAddress: string, ipAddress?: string): void {
   }
 }
 
+/**
+ * FCT-03: wallet-ownership challenges. A request must be signed by the wallet
+ * it asks to fund, using a fresh single-use challenge issued by /challenge.
+ * Challenges live in memory (single instance) and expire after a few minutes.
+ */
+const CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const challenges = new Map<string, { message: string; expiresAt: number }>();
+
+function pruneChallenges(now = Date.now()): void {
+  for (const [wallet, entry] of challenges) {
+    if (entry.expiresAt <= now) challenges.delete(wallet);
+  }
+}
+
+function isValidAddress(walletAddress: unknown): walletAddress is string {
+  return typeof walletAddress === 'string' && /^0x[a-fA-F0-9]{40}$/.test(walletAddress);
+}
+
 // Routes
 
 /**
@@ -108,14 +127,54 @@ app.get('/status', async (req: Request, res: Response) => {
 });
 
 /**
- * POST /request - Request testnet ETH
+ * POST /challenge - Issue a single-use message for the wallet to sign
+ */
+app.post('/challenge', (req: Request, res: Response) => {
+  const { walletAddress } = req.body || {};
+  if (!isValidAddress(walletAddress)) {
+    return res.status(400).json({ error: 'Invalid wallet address' });
+  }
+
+  const now = Date.now();
+  pruneChallenges(now);
+  const expiresAt = now + CHALLENGE_TTL_MS;
+  const message = [
+    'ByteStrike testnet faucet request',
+    `Wallet: ${walletAddress.toLowerCase()}`,
+    `Nonce: ${randomBytes(16).toString('hex')}`,
+    `Issued: ${new Date(now).toISOString()}`,
+    `Expires: ${new Date(expiresAt).toISOString()}`,
+  ].join('\n');
+
+  challenges.set(walletAddress.toLowerCase(), { message, expiresAt });
+  res.json({ message, expiresAt });
+});
+
+/**
+ * POST /request - Request testnet ETH (requires a signed challenge)
  */
 app.post('/request', async (req: Request, res: Response) => {
   try {
-    const { walletAddress } = req.body;
+    const { walletAddress, signature } = req.body || {};
 
-    if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
+    if (!isValidAddress(walletAddress)) {
       return res.status(400).json({ error: 'Invalid wallet address' });
+    }
+
+    if (typeof signature !== 'string' || !/^0x[0-9a-fA-F]+$/.test(signature)) {
+      return res.status(401).json({ error: 'Signature required. Request a challenge and sign it first.' });
+    }
+
+    // Consume the challenge before verifying so it can never be replayed.
+    const challenge = challenges.get(walletAddress.toLowerCase());
+    challenges.delete(walletAddress.toLowerCase());
+    if (!challenge || challenge.expiresAt <= Date.now()) {
+      return res.status(401).json({ error: 'Challenge missing or expired. Please try again.' });
+    }
+
+    const validSignature = await distributor.verifySignature(walletAddress, challenge.message, signature);
+    if (!validSignature) {
+      return res.status(401).json({ error: 'Signature does not match the wallet address.' });
     }
 
     const ipAddress = req.ip || req.headers['x-forwarded-for'] as string;
@@ -219,6 +278,7 @@ export function startServer(): void {
     console.log(`   Endpoints:`);
     console.log(`   - GET  /health`);
     console.log(`   - GET  /status`);
+    console.log(`   - POST /challenge`);
     console.log(`   - POST /request`);
     console.log(`   - GET  /requests`);
     console.log(`   - GET  /requests/:address`);

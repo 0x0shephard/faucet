@@ -39,6 +39,22 @@ export class ETHDistributor {
     return balance;
   }
 
+  /**
+   * Verifies a personal_sign signature. Uses the public client so that
+   * smart-account wallets (ERC-1271 / ERC-6492) verify as well as EOAs.
+   */
+  async verifySignature(address: string, message: string, signature: string): Promise<boolean> {
+    try {
+      return await this.publicClient.verifyMessage({
+        address: address as `0x${string}`,
+        message,
+        signature: signature as `0x${string}`,
+      });
+    } catch {
+      return false;
+    }
+  }
+
   async getUserBalance(userAddress: string): Promise<bigint> {
     const balance = await this.publicClient.getBalance({
       address: userAddress as `0x${string}`,
