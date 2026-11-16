@@ -1,5 +1,6 @@
 import { chromium, Browser, Page } from 'playwright';
-import { config, GOOGLE_FAUCET_URL } from './config';
+import * as path from 'path';
+import { config, GOOGLE_FAUCET_URL, SCREENSHOTS_DIR } from './config';
 import { FaucetClaim } from './types';
 import { saveClaimHistory } from './storage';
 
@@ -153,7 +154,7 @@ export class FaucetClaimer {
       }
 
       // Take screenshot for debugging
-      await this.page.screenshot({ path: `./data/screenshots/claim-${Date.now()}.png` });
+      await this.page.screenshot({ path: path.join(SCREENSHOTS_DIR, `claim-${Date.now()}.png`) });
 
     } catch (error: any) {
       console.error('❌ Faucet claim failed:', error.message);
@@ -162,7 +163,7 @@ export class FaucetClaimer {
 
       // Take screenshot on error
       try {
-        await this.page?.screenshot({ path: `./data/screenshots/error-${Date.now()}.png` });
+        await this.page?.screenshot({ path: path.join(SCREENSHOTS_DIR, `error-${Date.now()}.png`) });
       } catch (e) {
         // Ignore screenshot errors
       }

@@ -132,6 +132,20 @@ MAX_REQUESTS_PER_WALLET_PER_DAY=1
 MAX_REQUESTS_PER_IP_PER_DAY=3
 MIN_WALLET_BALANCE_THRESHOLD=0.05
 
+# Global cap: max total ETH sent across all users in any rolling 24h window
+MAX_DAILY_ETH=1
+
+# Reverse-proxy hops in front of the app (Railway = 1). Used to read the real client IP.
+TRUST_PROXY_HOPS=1
+
+# Admin token for GET /requests (send as the x-admin-token header).
+# Leave unset to disable the endpoint (it returns 404).
+ADMIN_TOKEN=
+
+# Directory for requests.json / claims.json / rate-limits.json.
+# Point it at a persistent volume in production (e.g. /app/data on Railway).
+DATA_DIR=./data
+
 # Browser (set to false for debugging)
 HEADLESS=true
 ```
@@ -195,7 +209,7 @@ Health check endpoint.
 
 ### `GET /status`
 
-Get distributor status and configuration.
+Get distributor status and configuration. The response is cached for 30 seconds.
 
 **Response:**
 ```json
@@ -232,13 +246,14 @@ Request testnet ETH distribution.
 
 **Error Responses:**
 - `400` - Invalid wallet address or sufficient balance
-- `429` - Rate limit exceeded
+- `429` - Rate limit exceeded (wallet, IP, or the global `MAX_DAILY_ETH` cap)
 - `409` - Pending request already exists
 - `500` - Distribution failed
 
 ### `GET /requests`
 
-Get all requests (admin endpoint).
+Get all requests (admin endpoint). Requires the header `x-admin-token: <ADMIN_TOKEN>`.
+Returns `401` with a missing or wrong token, and `404` when `ADMIN_TOKEN` is not set.
 
 **Response:**
 ```json
@@ -311,7 +326,9 @@ function TradingPage() {
 
 ## Data Storage
 
-All data is stored in JSON files in the `data/` directory:
+All data is stored in JSON files in the directory set by `DATA_DIR` (default `./data`).
+In production, point `DATA_DIR` at a persistent volume (e.g. a Railway volume mounted at
+`/app/data`) so the files survive redeploys. The paths below assume the default.
 
 ### `data/requests.json`
 
@@ -368,6 +385,10 @@ Browser screenshots for debugging (claim and error screenshots).
 | `MAX_REQUESTS_PER_WALLET_PER_DAY` | `1` | Max requests per wallet per 24h |
 | `MAX_REQUESTS_PER_IP_PER_DAY` | `3` | Max requests per IP per 24h |
 | `MIN_WALLET_BALANCE_THRESHOLD` | `0.05` | Only send if user has less than this |
+| `MAX_DAILY_ETH` | `1` | Global cap on ETH sent across all users in a rolling 24h window |
+| `TRUST_PROXY_HOPS` | `1` | Reverse-proxy hops to trust for the client IP (`0` = no proxy) |
+| `ADMIN_TOKEN` | unset | Token for `GET /requests` (`x-admin-token` header); unset disables the endpoint |
+| `DATA_DIR` | `./data` | Directory for the JSON data files |
 | `HEADLESS` | `true` | Run browser in headless mode |
 
 ## Security Considerations
@@ -378,11 +399,11 @@ Browser screenshots for debugging (claim and error screenshots).
 
 2. **Google Credentials**: Store securely. Consider using OAuth instead of password for production.
 
-3. **Rate Limiting**: The bot implements rate limiting, but consider adding additional layers (e.g., CAPTCHA, email verification).
+3. **Rate Limiting**: The bot implements per-wallet, per-IP and global daily (`MAX_DAILY_ETH`) limits. A request only counts toward the limits once its transaction is broadcast, and sends are serialized so concurrent requests can't race on the nonce. Set `TRUST_PROXY_HOPS` to match your proxy setup so the per-IP limit sees real client IPs, but consider adding additional layers (e.g., CAPTCHA, email verification).
 
 4. **Master Wallet**: Keep minimal balance in master wallet. Refill as needed.
 
-5. **API Access**: In production, add authentication to admin endpoints (`/requests`).
+5. **API Access**: `GET /requests` is protected by `ADMIN_TOKEN` and disabled when it is unset.
 
 6. **CORS**: Configure CORS properly for production (restrict origins).
 

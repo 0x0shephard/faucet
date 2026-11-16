@@ -1,7 +1,7 @@
 import * as fs from 'fs';
-import * as path from 'path';
+import { parseEther } from 'viem';
 import { FaucetRequest, FaucetClaim, RateLimitEntry } from './types';
-import { DATA_DIR, REQUESTS_FILE, CLAIMS_FILE, RATE_LIMIT_FILE } from './config';
+import { DATA_DIR, REQUESTS_FILE, CLAIMS_FILE, RATE_LIMIT_FILE, SCREENSHOTS_DIR } from './config';
 
 // Ensure data directory and subdirectories exist
 export function initializeStorage(): void {
@@ -9,9 +9,8 @@ export function initializeStorage(): void {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 
-  const screenshotsDir = path.join(DATA_DIR, 'screenshots');
-  if (!fs.existsSync(screenshotsDir)) {
-    fs.mkdirSync(screenshotsDir, { recursive: true });
+  if (!fs.existsSync(SCREENSHOTS_DIR)) {
+    fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
   }
 
   // Initialize empty files if they don't exist
@@ -47,18 +46,49 @@ export function addRequest(request: FaucetRequest): void {
   saveRequests(requests);
 }
 
+function lastIndexForWallet(requests: FaucetRequest[], walletAddress: string): number {
+  const wallet = walletAddress.toLowerCase();
+  for (let i = requests.length - 1; i >= 0; i--) {
+    if (requests[i].walletAddress.toLowerCase() === wallet) return i;
+  }
+  return -1;
+}
+
+// Updates the most recent request for the wallet (a wallet can have several over time).
 export function updateRequest(walletAddress: string, updates: Partial<FaucetRequest>): void {
   const requests = loadRequests();
-  const index = requests.findIndex(r => r.walletAddress.toLowerCase() === walletAddress.toLowerCase());
+  const index = lastIndexForWallet(requests, walletAddress);
   if (index !== -1) {
     requests[index] = { ...requests[index], ...updates };
     saveRequests(requests);
   }
 }
 
+// Returns the most recent request for the wallet.
 export function getRequestByWallet(walletAddress: string): FaucetRequest | undefined {
   const requests = loadRequests();
-  return requests.find(r => r.walletAddress.toLowerCase() === walletAddress.toLowerCase());
+  const index = lastIndexForWallet(requests, walletAddress);
+  return index === -1 ? undefined : requests[index];
+}
+
+/**
+ * Total wei sent by the faucet in the last `windowMs` (default 24h), computed from
+ * requests.json. Any request with a broadcast tx (txHash + amount) counts, even if the
+ * receipt was not confirmed, so the global cap errs on the safe side.
+ */
+export function getWeiSentSince(windowMs = 24 * 60 * 60 * 1000): bigint {
+  const since = Date.now() - windowMs;
+  let total = 0n;
+  for (const r of loadRequests()) {
+    if (r.timestamp > since && r.txHash && r.amount) {
+      try {
+        total += parseEther(r.amount);
+      } catch {
+        // ignore malformed amounts
+      }
+    }
+  }
+  return total;
 }
 
 // Claim History
