@@ -62,7 +62,16 @@ export class ETHDistributor {
     return balance;
   }
 
-  async checkCanDistribute(userAddress: string): Promise<{ canDistribute: boolean; reason?: string }> {
+  get address(): `0x${string}` {
+    return this.account.address;
+  }
+
+  async checkCanDistribute(userAddress: string): Promise<{
+    canDistribute: boolean;
+    reason?: string;
+    masterBalance: bigint;
+    userBalance?: bigint;
+  }> {
     // Check master wallet balance
     const masterBalance = await this.getMasterBalance();
     const minBalance = parseEther(config.minMasterBalance);
@@ -72,6 +81,7 @@ export class ETHDistributor {
       return {
         canDistribute: false,
         reason: `Insufficient master balance. Current: ${formatEther(masterBalance)} ETH, Need: ${formatEther(minBalance + distributionAmount)} ETH`,
+        masterBalance,
       };
     }
 
@@ -83,10 +93,12 @@ export class ETHDistributor {
       return {
         canDistribute: false,
         reason: `User already has sufficient balance: ${formatEther(userBalance)} ETH (threshold: ${formatEther(threshold)} ETH)`,
+        masterBalance,
+        userBalance,
       };
     }
 
-    return { canDistribute: true };
+    return { canDistribute: true, masterBalance, userBalance };
   }
 
   async distributeETH(toAddress: string): Promise<DistributionResult> {
@@ -108,12 +120,9 @@ export class ETHDistributor {
       const amount = parseEther(config.distributionAmount);
       result.amount = config.distributionAmount;
 
-      // Get current balances
-      const masterBalance = await this.getMasterBalance();
-      const userBalanceBefore = await this.getUserBalance(toAddress);
-
-      console.log(`   Master Balance: ${formatEther(masterBalance)} ETH`);
-      console.log(`   User Balance Before: ${formatEther(userBalanceBefore)} ETH`);
+      // Balances were already read by the pre-flight check; reuse them.
+      console.log(`   Master Balance: ${formatEther(check.masterBalance)} ETH`);
+      console.log(`   User Balance Before: ${formatEther(check.userBalance ?? 0n)} ETH`);
       console.log(`   Sending Amount: ${config.distributionAmount} ETH`);
 
       // Send transaction
@@ -124,6 +133,8 @@ export class ETHDistributor {
         value: amount,
       });
 
+      // From here on the tx is broadcast; report its hash even if confirmation fails.
+      result.txHash = hash;
       console.log(`   Transaction Hash: ${hash}`);
       console.log(`   Waiting for confirmation...`);
 
@@ -131,15 +142,12 @@ export class ETHDistributor {
       const receipt = await this.publicClient.waitForTransactionReceipt({
         hash,
         confirmations: 1,
+        timeout: 120_000,
       });
 
       if (receipt.status === 'success') {
-        const userBalanceAfter = await this.getUserBalance(toAddress);
-        console.log(`   User Balance After: ${formatEther(userBalanceAfter)} ETH`);
         console.log(`✅ Distribution successful!`);
-
         result.success = true;
-        result.txHash = hash;
       } else {
         result.error = 'Transaction reverted';
         console.log(`❌ Transaction reverted`);

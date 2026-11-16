@@ -1,4 +1,5 @@
 import * as dotenv from 'dotenv';
+import * as path from 'path';
 import { BotConfig } from './types';
 
 dotenv.config();
@@ -28,7 +29,20 @@ export const config: BotConfig = {
 };
 
 export const GOOGLE_FAUCET_URL = 'https://cloud.google.com/application/web3/faucet/ethereum/sepolia';
-export const DATA_DIR = './data';
-export const REQUESTS_FILE = `${DATA_DIR}/requests.json`;
-export const CLAIMS_FILE = `${DATA_DIR}/claims.json`;
-export const RATE_LIMIT_FILE = `${DATA_DIR}/rate-limits.json`;
+// Storage location. Point DATA_DIR at a persistent volume (e.g. /app/data on Railway)
+// so the JSON files survive redeploys. The file format is unchanged.
+export const DATA_DIR = process.env.DATA_DIR || './data';
+export const REQUESTS_FILE = path.join(DATA_DIR, 'requests.json');
+export const CLAIMS_FILE = path.join(DATA_DIR, 'claims.json');
+export const RATE_LIMIT_FILE = path.join(DATA_DIR, 'rate-limits.json');
+export const SCREENSHOTS_DIR = path.join(DATA_DIR, 'screenshots');
+
+// Global cap on ETH sent in any rolling 24h window, across all users.
+export const MAX_DAILY_ETH = process.env.MAX_DAILY_ETH || '1';
+
+// Number of reverse-proxy hops in front of the app (Railway = 1). Used for req.ip.
+const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 1);
+export const TRUST_PROXY_HOPS = Number.isInteger(trustProxyHops) && trustProxyHops >= 0 ? trustProxyHops : 1;
+
+// Admin token for GET /requests. If unset, the endpoint is disabled (404).
+export const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';

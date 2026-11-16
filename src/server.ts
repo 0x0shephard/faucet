@@ -1,7 +1,8 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import { randomBytes } from 'crypto';
-import { config } from './config';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
+import { formatEther, parseEther } from 'viem';
+import { config, MAX_DAILY_ETH, TRUST_PROXY_HOPS, ADMIN_TOKEN } from './config';
 import { ETHDistributor } from './distributor';
 import {
   initializeStorage,
@@ -10,7 +11,8 @@ import {
   getRequestByWallet,
   getRateLimit,
   updateRateLimit,
-  loadRequests
+  loadRequests,
+  getWeiSentSince
 } from './storage';
 import { FaucetRequest } from './types';
 
@@ -18,6 +20,10 @@ import { FaucetRequest } from './types';
 
 const app = express();
 const distributor = new ETHDistributor();
+
+// Behind Railway's proxy req.ip is the proxy's address unless we trust it. With the
+// hop count set, Express derives req.ip from X-Forwarded-For safely.
+app.set('trust proxy', TRUST_PROXY_HOPS);
 
 // Middleware
 app.use(cors());
@@ -79,6 +85,72 @@ function incrementRateLimit(walletAddress: string, ipAddress?: string): void {
 }
 
 /**
+ * Global daily cap: total ETH sent in the rolling last 24h (from requests.json).
+ */
+const maxDailyWei = parseEther(MAX_DAILY_ETH);
+
+function checkDailyCap(): { allowed: boolean; reason?: string } {
+  const sent = getWeiSentSince();
+  if (sent + parseEther(config.distributionAmount) > maxDailyWei) {
+    return {
+      allowed: false,
+      reason: `Faucet daily limit reached (${formatEther(sent)} / ${MAX_DAILY_ETH} ETH in the last 24h). Please try again later.`,
+    };
+  }
+  return { allowed: true };
+}
+
+/**
+ * Single-flight lock: only one send runs at a time, so concurrent requests can't
+ * race on the master wallet nonce or overshoot the rate limits / daily cap.
+ */
+let sendQueue: Promise<unknown> = Promise.resolve();
+function withSendLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = sendQueue.then(fn, fn);
+  sendQueue = run.catch(() => undefined);
+  return run;
+}
+
+/**
+ * GET /status cache (30s) so frequent polling doesn't cost RPC calls per hit.
+ */
+const STATUS_TTL_MS = 30 * 1000;
+let statusCache: { body: Record<string, unknown>; expiresAt: number } | undefined;
+let statusInFlight: Promise<Record<string, unknown>> | undefined;
+
+async function getStatusBody(): Promise<Record<string, unknown>> {
+  if (statusCache && statusCache.expiresAt > Date.now()) return statusCache.body;
+  if (!statusInFlight) {
+    statusInFlight = (async () => {
+      const [balance, gasPrice] = await Promise.all([
+        distributor.getMasterBalance(),
+        distributor.getGasPrice(),
+      ]);
+      const body = {
+        masterWallet: distributor.address,
+        balance: balance.toString(),
+        gasPrice: gasPrice.toString(),
+        distributionAmount: config.distributionAmount,
+        minBalance: config.minMasterBalance,
+        threshold: config.minWalletBalanceThreshold,
+      };
+      statusCache = { body, expiresAt: Date.now() + STATUS_TTL_MS };
+      return body;
+    })().finally(() => {
+      statusInFlight = undefined;
+    });
+  }
+  return statusInFlight;
+}
+
+function tokenMatches(provided: unknown, expected: string): boolean {
+  if (typeof provided !== 'string' || provided.length === 0) return false;
+  const a = createHash('sha256').update(provided).digest();
+  const b = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
+/**
  * FCT-03: wallet-ownership challenges. A request must be signed by the wallet
  * it asks to fund, using a fresh single-use challenge issued by /challenge.
  * Challenges live in memory (single instance) and expire after a few minutes.
@@ -110,17 +182,7 @@ app.get('/health', (req: Request, res: Response) => {
  */
 app.get('/status', async (req: Request, res: Response) => {
   try {
-    const balance = await distributor.getMasterBalance();
-    const gasPrice = await distributor.getGasPrice();
-
-    res.json({
-      masterWallet: (await distributor['account']).address,
-      balance: balance.toString(),
-      gasPrice: gasPrice.toString(),
-      distributionAmount: config.distributionAmount,
-      minBalance: config.minMasterBalance,
-      threshold: config.minWalletBalanceThreshold,
-    });
+    res.json(await getStatusBody());
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -177,9 +239,10 @@ app.post('/request', async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Signature does not match the wallet address.' });
     }
 
-    const ipAddress = req.ip || req.headers['x-forwarded-for'] as string;
+    // With 'trust proxy' set, req.ip is the real client IP from X-Forwarded-For.
+    const ipAddress = req.ip;
 
-    // Check rate limits
+    // Check rate limits (fast fail; re-checked inside the send lock)
     const rateLimitCheck = checkRateLimit(walletAddress, ipAddress);
     if (!rateLimitCheck.allowed) {
       return res.status(429).json({ error: rateLimitCheck.reason });
@@ -204,42 +267,64 @@ app.post('/request', async (req: Request, res: Response) => {
       });
     }
 
-    // Create request
-    const request: FaucetRequest = {
-      walletAddress: walletAddress.toLowerCase(),
-      ipAddress,
-      timestamp: Date.now(),
-      status: 'approved', // Auto-approve for now
-    };
+    // Global daily cap (fast fail; re-checked inside the send lock)
+    const capCheck = checkDailyCap();
+    if (!capCheck.allowed) {
+      return res.status(429).json({ error: capCheck.reason });
+    }
 
-    addRequest(request);
-    incrementRateLimit(walletAddress, ipAddress);
+    const outcome = await withSendLock(async () => {
+      // Re-check under the lock: another request may have sent while we waited.
+      const limitAgain = checkRateLimit(walletAddress, ipAddress);
+      if (!limitAgain.allowed) return { status: 429, body: { error: limitAgain.reason } };
+      const capAgain = checkDailyCap();
+      if (!capAgain.allowed) return { status: 429, body: { error: capAgain.reason } };
 
-    // Distribute ETH immediately (auto-approve)
-    const result = await distributor.distributeETH(walletAddress);
+      // Create request
+      const request: FaucetRequest = {
+        walletAddress: walletAddress.toLowerCase(),
+        ipAddress,
+        timestamp: Date.now(),
+        status: 'approved', // Auto-approve for now
+      };
+      addRequest(request);
 
-    if (result.success) {
-      updateRequest(walletAddress, {
-        status: 'completed',
-        txHash: result.txHash,
-        amount: result.amount,
-      });
+      // Distribute ETH immediately (auto-approve)
+      const result = await distributor.distributeETH(walletAddress);
 
-      return res.json({
-        success: true,
-        message: 'ETH sent successfully!',
-        txHash: result.txHash,
-        amount: result.amount,
-      });
-    } else {
+      // Only a broadcast transaction counts toward the rate limits. Failures before
+      // broadcast (RPC errors, low master balance, etc.) don't burn the user's slot.
+      if (result.txHash) {
+        incrementRateLimit(walletAddress, ipAddress);
+      }
+
+      if (result.success) {
+        updateRequest(walletAddress, {
+          status: 'completed',
+          txHash: result.txHash,
+          amount: result.amount,
+        });
+        return {
+          status: 200,
+          body: {
+            success: true,
+            message: 'ETH sent successfully!',
+            txHash: result.txHash,
+            amount: result.amount,
+          },
+        };
+      }
+
+      // Keep txHash/amount if the tx was broadcast but not confirmed, so it still
+      // counts toward the daily cap.
       updateRequest(walletAddress, {
         status: 'rejected',
+        ...(result.txHash ? { txHash: result.txHash, amount: result.amount } : {}),
       });
+      return { status: 500, body: { error: result.error || 'Distribution failed' } };
+    });
 
-      return res.status(500).json({
-        error: result.error || 'Distribution failed',
-      });
-    }
+    return res.status(outcome.status).json(outcome.body);
 
   } catch (error: any) {
     console.error('Request error:', error);
@@ -248,9 +333,16 @@ app.post('/request', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /requests - Get all requests (admin)
+ * GET /requests - Get all requests (admin). Requires the `x-admin-token` header to
+ * match ADMIN_TOKEN. Disabled (404) when ADMIN_TOKEN is not set.
  */
 app.get('/requests', (req: Request, res: Response) => {
+  if (!ADMIN_TOKEN) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  if (!tokenMatches(req.headers['x-admin-token'], ADMIN_TOKEN)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
   const requests = loadRequests();
   res.json(requests);
 });
@@ -280,7 +372,7 @@ export function startServer(): void {
     console.log(`   - GET  /status`);
     console.log(`   - POST /challenge`);
     console.log(`   - POST /request`);
-    console.log(`   - GET  /requests`);
+    console.log(`   - GET  /requests${ADMIN_TOKEN ? ' (admin token)' : ' (disabled: ADMIN_TOKEN unset)'}`);
     console.log(`   - GET  /requests/:address`);
     console.log(`================================\n`);
 
